@@ -1,0 +1,28 @@
+Port 2222
+ListenAddress 0.0.0.0
+
+# Host keys
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Authentication
+PasswordAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PermitRootLogin no
+PermitEmptyPasswords no
+
+# Logging
+SyslogFacility AUTH
+LogLevel INFO
+
+# Keep connections alive
+ClientAliveInterval 60
+ClientAliveCountMax 3
+
+# Restrict git user to git-shell (Match block must be last)
+Match User git
+    ForceCommand /usr/bin/git-shell -c "$SSH_ORIGINAL_COMMAND"
+    X11Forwarding no
+    AllowTcpForwarding no
+    PermitTTY no

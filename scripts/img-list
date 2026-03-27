@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# =============================================================================
+# img-list — shows all pre-seeded OCI images in /data/images
+# =============================================================================
+
+IMAGES_DIR="/data/images"
+
+echo ""
+printf "%-50s  %s\n" "OCI IMAGE" "SIZE"
+printf '%s\n' "$(printf '%.0s-' {1..65})"
+
+found=0
+for dir in "$IMAGES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    name="$(basename "$dir")"
+    # Reverse the safe-name encoding for display
+    display="${name#docker.io_library_}"
+    display="${display//_/:}"   # last _ becomes : (tag separator)
+    # Re-fix any remaining _ that were / in the original name
+    size="$(du -sh "$dir" 2>/dev/null | cut -f1)"
+    printf "%-50s  %s\n" "$display" "$size"
+    found=1
+done
+
+if [[ $found -eq 0 ]]; then
+    echo "  (no images seeded yet — run img-seed)"
+fi
+echo ""

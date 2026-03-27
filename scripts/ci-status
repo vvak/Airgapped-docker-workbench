@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ci-status [--all | --failed | --last N]
+# Prints a summary table of CI jobs from /var/spool/ci/done/
+# =============================================================================
+
+DONE_DIR="/var/spool/ci/done"
+PENDING_DIR="/var/spool/ci/pending"
+RUNNING_DIR="/var/spool/ci/running"
+LIMIT=20
+FILTER="all"
+
+usage() {
+    echo "Usage: ci-status [--all] [--failed] [--last N]"
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --all)    FILTER="all";    shift ;;
+        --failed) FILTER="failed"; shift ;;
+        --last)   LIMIT="$2";     shift 2 ;;
+        --help|-h) usage ;;
+        *) echo "Unknown option: $1"; usage ;;
+    esac
+done
+
+# --- Pending / Running summary ---
+pending_count=$(find "$PENDING_DIR" -name "*.job" 2>/dev/null | wc -l)
+running_count=$(find "$RUNNING_DIR" -name "*.job" 2>/dev/null | wc -l)
+echo ""
+printf "  Pending: %-4s  Running: %-4s\n" "$pending_count" "$running_count"
+echo ""
+
+# --- Column header ---
+printf "%-26s  %-20s  %-12s  %-8s  %s\n" "JOB ID" "REPO" "REF" "RESULT" "FINISHED"
+printf '%s\n' "$(printf '%.0s-' {1..85})"
+
+# --- Done jobs ---
+mapfile -t jobs < <(find "$DONE_DIR" -name "*.job" 2>/dev/null | sort -r | head -n "$LIMIT")
+
+if [[ ${#jobs[@]} -eq 0 ]]; then
+    echo "  (no completed jobs)"
+    echo ""
+    exit 0
+fi
+
+for job in "${jobs[@]}"; do
+    source "$job"
+    result="${EXIT_CODE:-?}"
+    finished="${FINISHED_AT:--}"
+    repo_short="${REPO##*/}"
+    repo_short="${repo_short%.git}"
+    ref_short="${REF##refs/heads/}"
+
+    [[ "$FILTER" == "failed" && "$result" == "0" ]] && continue
+
+    if [[ "$result" == "0" ]]; then
+        status="PASS"
+        color="\033[0;32m"
+    else
+        status="FAIL"
+        color="\033[0;31m"
+    fi
+
+    job_id="$(basename "$job" .job)"
+    printf "%-26s  %-20s  %-12s  ${color}%-8s\033[0m  %s\n" \
+        "$job_id" "$repo_short" "$ref_short" "$status" "$finished"
+done
+
+echo ""

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# =============================================================================
+# metrics-report [--sparkline] [--jobs]
+# Prints a terminal summary of system and CI metrics.
+# With --sparkline, renders a CPU/mem trend using gnuplot (dumb terminal).
+# =============================================================================
+
+SPARKLINE=false
+JOBS_ONLY=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --sparkline) SPARKLINE=true; shift ;;
+        --jobs)      JOBS_ONLY=true;  shift ;;
+        *) echo "Usage: metrics-report [--sparkline] [--jobs]"; exit 0 ;;
+    esac
+done
+
+METRICS_FILE="/data/metrics/raw/telegraf.log"
+LOG_DIR="/var/log/ci"
+
+# ---------------------------------------------------------------------------
+# System snapshot
+# ---------------------------------------------------------------------------
+if ! $JOBS_ONLY; then
+    echo ""
+    echo "=== System Snapshot ==="
+
+    # CPU (from /proc/stat — 1 sample delta)
+    read -r cpu_line < /proc/stat
+    cpu_values=($cpu_line)
+    idle1=${cpu_values[4]}
+    total1=$(( ${cpu_values[1]} + ${cpu_values[2]} + ${cpu_values[3]} + ${cpu_values[4]} + \
+               ${cpu_values[5]} + ${cpu_values[6]} + ${cpu_values[7]} ))
+    sleep 0.5
+    read -r cpu_line < /proc/stat
+    cpu_values=($cpu_line)
+    idle2=${cpu_values[4]}
+    total2=$(( ${cpu_values[1]} + ${cpu_values[2]} + ${cpu_values[3]} + ${cpu_values[4]} + \
+               ${cpu_values[5]} + ${cpu_values[6]} + ${cpu_values[7]} ))
+    delta_total=$(( total2 - total1 ))
+    delta_idle=$(( idle2 - idle1 ))
+    cpu_pct=$(awk "BEGIN { printf \"%.1f\", 100 * (1 - $delta_idle / $delta_total) }")
+    printf "  CPU usage   : %s%%\n" "$cpu_pct"
+
+    # Memory (from /proc/meminfo)
+    mem_total=$(awk '/MemTotal/  { print $2 }' /proc/meminfo)
+    mem_avail=$(awk '/MemAvailable/ { print $2 }' /proc/meminfo)
+    mem_used=$(( mem_total - mem_avail ))
+    mem_pct=$(awk "BEGIN { printf \"%.1f\", 100 * $mem_used / $mem_total }")
+    printf "  Memory      : %s MB used / %s MB total  (%s%%)\n" \
+        "$(( mem_used / 1024 ))" "$(( mem_total / 1024 ))" "$mem_pct"
+
+    # Disk
+    disk_info=$(df -h /data 2>/dev/null | awk 'NR==2 { print $3" used / "$2" total ("$5")" }')
+    printf "  Disk (/data): %s\n" "$disk_info"
+    echo ""
+fi
+
+# ---------------------------------------------------------------------------
+# CI job summary
+# ---------------------------------------------------------------------------
+echo "=== CI Job Summary ==="
+total=$(find /var/spool/ci/done -name "*.job" 2>/dev/null | wc -l)
+passed=$(grep -rl "EXIT_CODE=0" /var/spool/ci/done 2>/dev/null | wc -l)
+failed=$(( total - passed ))
+pending=$(find /var/spool/ci/pending -name "*.job" 2>/dev/null | wc -l)
+running=$(find /var/spool/ci/running -name "*.job" 2>/dev/null | wc -l)
+
+printf "  Total jobs  : %s\n" "$total"
+printf "  Passed      : \033[0;32m%s\033[0m\n" "$passed"
+printf "  Failed      : \033[0;31m%s\033[0m\n" "$failed"
+printf "  Pending     : %s\n" "$pending"
+printf "  Running     : %s\n" "$running"
+
+# Last 5 jobs
+echo ""
+echo "  Recent jobs:"
+ls -1t /var/spool/ci/done/*.job 2>/dev/null | head -5 | while read -r job; do
+    source "$job"
+    status="PASS"
+    color="\033[0;32m"
+    [[ "${EXIT_CODE:-1}" != "0" ]] && status="FAIL" && color="\033[0;31m"
+    printf "    ${color}%-6s\033[0m  %s  %-20s  %s\n" \
+        "$status" "${FINISHED_AT:--}" "${REPO##*/}" "${SHA:0:8}"
+done
+echo ""
+
+# ---------------------------------------------------------------------------
+# Sparkline (optional — requires gnuplot and telegraf data)
+# ---------------------------------------------------------------------------
+if $SPARKLINE; then
+    if ! command -v gnuplot &>/dev/null; then
+        echo "gnuplot not available — skipping sparkline."
+        exit 0
+    fi
+    if [[ ! -s "$METRICS_FILE" ]]; then
+        echo "No telegraf metrics collected yet — skipping sparkline."
+        exit 0
+    fi
+
+    # Extract CPU values from telegraf output (simple grep on "usage_idle")
+    TMPDATA=$(mktemp)
+    grep "cpu,cpu=cpu-total" "$METRICS_FILE" 2>/dev/null \
+        | grep "usage_idle" \
+        | awk '{ for(i=1;i<=NF;i++) if($i ~ /^usage_idle=/) { split($i,a,"="); printf "%s %.1f\n", NR, 100-a[2] } }' \
+        | tail -60 > "$TMPDATA"
+
+    if [[ -s "$TMPDATA" ]]; then
+        gnuplot <<EOF
+set terminal dumb 80 15
+set title "CPU % (last 60 samples)"
+set xlabel "sample"
+set ylabel "%"
+set yrange [0:100]
+set nokey
+plot "$TMPDATA" using 1:2 with lines
+EOF
+    else
+        echo "Not enough data for sparkline yet."
+    fi
+    rm -f "$TMPDATA"
+fi

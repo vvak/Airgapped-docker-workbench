@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# =============================================================================
+# post-receive hook — installed into every repo by new-repo
+# Writes a job file to /var/spool/ci/pending/ for each pushed ref.
+# Git calls this with lines on stdin: <old-sha> <new-sha> <ref>
+# =============================================================================
+
+REPO_PATH="$(pwd)"
+PUSHED_BY="${SUDO_USER:-${USER:-unknown}}"
+TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
+
+while read -r old_sha new_sha ref; do
+    # Skip branch deletions
+    [[ "$new_sha" == "0000000000000000000000000000000000000000" ]] && continue
+
+    JOB_ID="${TIMESTAMP}-$(echo "$new_sha" | cut -c1-8)-$(echo "$ref" | tr '/' '-')"
+    JOB_FILE="/var/spool/ci/pending/${JOB_ID}.job"
+
+    cat > "$JOB_FILE" <<EOF
+REPO=${REPO_PATH}
+REF=${ref}
+SHA=${new_sha}
+OLD_SHA=${old_sha}
+PUSHED_BY=${PUSHED_BY}
+QUEUED_AT=$(date '+%Y-%m-%dT%H:%M:%S')
+EOF
+
+    echo "  [CI] Job queued: $JOB_ID"
+    echo "  [CI] Run 'ci-queue' to check status."
+done

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# =============================================================================
+# new-repo <repo-name>
+# Creates a new bare Git repository and installs the CI post-receive hook.
+# =============================================================================
+set -euo pipefail
+
+REPO_NAME="${1:?Usage: new-repo <repo-name>}"
+REPO_NAME="${REPO_NAME%.git}.git"   # normalise: always ends in .git
+REPOS_DIR="/home/git/repos"
+REPO_PATH="$REPOS_DIR/$REPO_NAME"
+
+if [[ -d "$REPO_PATH" ]]; then
+    echo "Repository already exists: $REPO_PATH"
+    exit 1
+fi
+
+# Create bare repo
+git init --bare "$REPO_PATH"
+
+# Install post-receive hook
+cp /usr/local/lib/cicd/post-receive "$REPO_PATH/hooks/post-receive"
+chmod +x "$REPO_PATH/hooks/post-receive"
+
+# Set ownership so the git user can access it over SSH
+chown -R git:git "$REPO_PATH"
+
+echo ""
+echo "Repository created: $REPO_PATH"
+echo ""
+echo "To use it:"
+echo "  git remote add origin ssh://git@<host>:2222/home/git/repos/$REPO_NAME"
+echo ""
+echo "Add a pipeline script at .ci/pipeline.sh in your repo."
+echo "It will be triggered automatically on every push."
+echo ""

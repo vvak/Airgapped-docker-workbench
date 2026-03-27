@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ci-queue — shows jobs currently pending or running
+# =============================================================================
+
+echo ""
+echo "=== RUNNING ==="
+found=0
+for job in /var/spool/ci/running/*.job; do
+    [[ -e "$job" ]] || continue
+    source "$job"
+    echo "  $(basename "$job" .job)  →  ${REPO##*/}  [${REF##refs/heads/}]  pushed by ${PUSHED_BY:-?}"
+    found=1
+done
+[[ $found -eq 0 ]] && echo "  (none)"
+
+echo ""
+echo "=== PENDING ==="
+found=0
+for job in /var/spool/ci/pending/*.job; do
+    [[ -e "$job" ]] || continue
+    source "$job"
+    echo "  $(basename "$job" .job)  →  ${REPO##*/}  [${REF##refs/heads/}]  pushed by ${PUSHED_BY:-?}"
+    found=1
+done
+[[ $found -eq 0 ]] && echo "  (none)"
+echo ""

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# =============================================================================
+# img-seed — pull images from upstream registries into local OCI layout store
+# Run ONCE before severing internet access.
+# =============================================================================
+set -euo pipefail
+
+IMAGES_DIR="/data/images"
+mkdir -p "$IMAGES_DIR"
+
+log() { echo "[img-seed] $*"; }
+
+# ---------------------------------------------------------------------------
+# List of images to pre-seed.
+# Format: "registry/image:tag"  (use full registry path)
+# Add whatever your pipelines need before going air-gapped.
+# ---------------------------------------------------------------------------
+IMAGES=(
+    "docker.io/library/alpine:3.20"
+    "docker.io/library/debian:bookworm-slim"
+    "docker.io/library/ubuntu:24.04"
+    "docker.io/library/node:20-alpine"
+    "docker.io/library/python:3.12-slim"
+    "docker.io/library/golang:1.22-alpine"
+    "docker.io/library/maven:3.9-eclipse-temurin-21"
+    "docker.io/library/docker:27-cli"
+    "docker.io/library/busybox:latest"
+    "docker.io/library/bash:5"
+)
+
+PASS=0
+FAIL=0
+
+for image in "${IMAGES[@]}"; do
+    # Derive a filesystem-safe name: replace / and : with -
+    safe_name="${image//\//_}"
+    safe_name="${safe_name//:/_}"
+    dest="$IMAGES_DIR/$safe_name"
+
+    log "Pulling $image → $dest ..."
+    if skopeo copy \
+        --dest-compress \
+        "docker://${image}" \
+        "oci:${dest}:latest" 2>&1; then
+        log "  ✓ $image"
+        PASS=$((PASS + 1))
+    else
+        log "  ✗ FAILED: $image"
+        FAIL=$((FAIL + 1))
+    fi
+done
+
+echo ""
+log "Seed complete. Passed: $PASS  Failed: $FAIL"
+log "Images stored in: $IMAGES_DIR"
+echo ""

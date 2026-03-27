@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ci-logs <job-id> [--follow]
+# Prints or tails the log for a given job ID.
+# =============================================================================
+
+JOB_ID="${1:-}"
+FOLLOW=false
+
+[[ "$2" == "--follow" || "$2" == "-f" ]] && FOLLOW=true
+
+usage() {
+    echo "Usage: ci-logs <job-id> [--follow|-f]"
+    echo ""
+    echo "Recent job IDs:"
+    ls -1t /var/spool/ci/done/*.job 2>/dev/null | head -10 | \
+        xargs -I{} basename {} .job | sed 's/^/  /'
+    exit 1
+}
+
+[[ -z "$JOB_ID" ]] && usage
+
+LOG_FILE="/var/log/ci/${JOB_ID}.log"
+
+if [[ ! -f "$LOG_FILE" ]]; then
+    echo "Log not found: $LOG_FILE"
+    echo ""
+    echo "Available logs:"
+    ls -1t /var/log/ci/*.log 2>/dev/null | head -20 | \
+        xargs -I{} basename {} .log | sed 's/^/  /'
+    exit 1
+fi
+
+if $FOLLOW; then
+    tail -f "$LOG_FILE"
+else
+    cat "$LOG_FILE"
+fi

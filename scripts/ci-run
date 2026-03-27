@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ci-run <path-to-job-file>
+# Dequeues a job, executes the pipeline script inside the repo, logs output.
+# Job file format (key=value):
+#   REPO=/home/git/repos/myapp.git
+#   REF=refs/heads/main
+#   SHA=abc123
+#   PUSHED_BY=alice
+# =============================================================================
+set -euo pipefail
+
+JOB_FILE="${1:?Usage: ci-run <job-file>}"
+[[ -f "$JOB_FILE" ]] || { echo "Job file not found: $JOB_FILE"; exit 1; }
+
+# Parse job metadata
+source "$JOB_FILE"
+JOB_ID="$(basename "$JOB_FILE" .job)"
+LOG_DIR="/var/log/ci"
+LOG_FILE="$LOG_DIR/${JOB_ID}.log"
+WORK_DIR="/tmp/ci-work-${JOB_ID}"
+
+mkdir -p "$LOG_DIR"
+
+log() { echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
+
+log "=== Job $JOB_ID ==="
+log "Repo      : ${REPO}"
+log "Ref       : ${REF}"
+log "SHA       : ${SHA}"
+log "Pushed by : ${PUSHED_BY:-unknown}"
+
+# Move job to running
+mv "$JOB_FILE" "/var/spool/ci/running/${JOB_ID}.job"
+
+EXIT_CODE=0
+
+# Clone the repo at the specific SHA into a temp workspace
+# (set -e is disabled inside ( ) || ... in bash, so use explicit checks instead)
+log "Cloning ${REPO} @ ${SHA}..."
+if ! git -c safe.directory='*' -c protocol.file.allow=always clone "${REPO}" "$WORK_DIR" >> "$LOG_FILE" 2>&1; then
+    log "ERROR: git clone failed for ${REPO}"
+    EXIT_CODE=1
+fi
+
+if [[ $EXIT_CODE -eq 0 ]]; then
+    if ! git -c safe.directory='*' -C "$WORK_DIR" checkout --quiet "$SHA" >> "$LOG_FILE" 2>&1; then
+        log "ERROR: git checkout failed for SHA ${SHA}"
+        EXIT_CODE=1
+    fi
+fi
+
+if [[ $EXIT_CODE -eq 0 ]]; then
+    # Look for pipeline definition
+    PIPELINE=""
+    for candidate in .ci/pipeline.sh ci.sh .pipeline.sh; do
+        if [[ -f "$WORK_DIR/$candidate" ]]; then
+            PIPELINE="$WORK_DIR/$candidate"
+            break
+        fi
+    done
+
+    if [[ -z "$PIPELINE" ]]; then
+        log "ERROR: No pipeline script found. Expected .ci/pipeline.sh or ci.sh"
+        EXIT_CODE=1
+    fi
+fi
+
+if [[ $EXIT_CODE -eq 0 ]]; then
+    log "Running pipeline: $PIPELINE"
+    chmod +x "$PIPELINE"
+
+    # Export standard CI environment variables
+    export CI=true
+    export CI_JOB_ID="$JOB_ID"
+    export CI_COMMIT_SHA="$SHA"
+    export CI_COMMIT_REF="$REF"
+    export CI_REPO="$REPO"
+    export CI_IMAGE_REGISTRY="localhost"       # point pipelines at local OCI store
+    export CI_IMAGES_DIR="/data/images"
+
+    (cd "$WORK_DIR" && bash "$PIPELINE") >> "$LOG_FILE" 2>&1 || EXIT_CODE=$?
+fi
+
+# Cleanup workspace
+rm -rf "$WORK_DIR"
+
+# Record result
+RESULT_FILE="/var/spool/ci/done/${JOB_ID}.job"
+cp "/var/spool/ci/running/${JOB_ID}.job" "$RESULT_FILE"
+echo "EXIT_CODE=${EXIT_CODE}" >> "$RESULT_FILE"
+echo "FINISHED_AT=$(date '+%Y-%m-%dT%H:%M:%S')" >> "$RESULT_FILE"
+rm -f "/var/spool/ci/running/${JOB_ID}.job"
+
+if [[ $EXIT_CODE -eq 0 ]]; then
+    log "=== PASSED (exit 0) ==="
+else
+    log "=== FAILED (exit ${EXIT_CODE}) ==="
+fi
+
+exit "$EXIT_CODE"

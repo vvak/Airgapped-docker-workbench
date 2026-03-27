@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Shown when someone SSHs in as git without a git command.
+echo ""
+echo "  Hi. This is a git-only SSH endpoint."
+echo "  Interactive logins are not permitted."
+echo ""
+echo "  Usage:"
+echo "    git clone ssh://git@<host>:2222/home/git/repos/<repo>.git"
+echo "    git push  ssh://git@<host>:2222/home/git/repos/<repo>.git"
+echo ""
+exit 128
